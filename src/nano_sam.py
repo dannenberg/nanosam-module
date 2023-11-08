@@ -5,7 +5,7 @@ import numpy as np
 
 from nanosam.utils.predictor import Predictor
 
-from PIL.Image import Image, 
+from PIL.Image import Image
 from threading import Lock
 from typing import cast, ClassVar, List, Mapping, Optional, Sequence, Tuple, Union
 from typing_extensions import Self

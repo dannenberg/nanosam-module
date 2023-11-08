@@ -3,9 +3,11 @@ import logging
 import math
 import numpy as np
 
-from PIL.Image import Image
+from nanosam.utils.predictor import Predictor
+
+from PIL.Image import Image, 
 from threading import Lock
-from typing import ClassVar, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import cast, ClassVar, List, Mapping, Optional, Sequence, Tuple, Union
 from typing_extensions import Self
 from viam.components.camera import Camera, DistortionParameters, IntrinsicParameters, RawImage
 from viam.logging import getLogger
@@ -23,18 +25,14 @@ from viam.media.video import CameraMimeType
 class NanoSAM(Camera, Reconfigurable):
     MODEL: ClassVar[Model] = Model(ModelFamily('viam-soleng', 'nanoSAM'), 'segmenter-cam')
     logger: logging.Logger
+    underlying: Camera
     properties: Camera.Properties
+    predictor: Predictor
 
     @classmethod
     def new(cls, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]) -> Self:
         cam = cls(config.name)
         cam.logger = getLogger(f'{__name__}.{cam.__class__.__name__}')
-        #TODO: confirm intrinsics and distortion.
-        lidar.properties = Camera.Properties(
-            supports_pcd=False,
-            intrinsic_parameters=IntrinsicParameters(width_px=0, height_px=0, focal_x_px=0.0, focal_y_px=0.0, center_x_px=0.0),
-            distortion_parameters=DistortionParameters(model='')
-        )
         cam.reconfigure(config, dependencies)
 
         return cam
@@ -52,11 +50,31 @@ class NanoSAM(Camera, Reconfigurable):
         return []
 
     def reconfigure(self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]):
-        pass
+        cam_name = struct_to_dict(config.attributes).get("source")
+        actual_cam = dependencies[Camera.get_resource_name(cam_name)]
+        self.underlying = cast(Camera, actual_cam)
+        self.properties = self.underlying.properties()
+        #TODO: move image_encoder and mask_decoder to be args
+        self.predictor = Predictor(
+            "data/resnet18_image_encoder.engine",
+            "data/mobile_sam_mask_decoder.engine"
+        )
+        return
 
     async def get_image(self, mime_type: str='', *, timeout: Optional[float]=None, **kwargs) -> Union[Image, RawImage]:
-        #TODO: do the work here
-        raise NotImplementedError()
+        img = self.underlying.get_image()
+        self.predictor.set_image(img)
+
+        # Segment using bounding box
+        bbox = [100, 100, 850, 759]  # x0, y0, x1, y1
+        points = np.array([
+            [bbox[0], bbox[1]],
+            [bbox[2], bbox[3]]
+        ])
+        point_labels = np.array([2, 3])
+        mask, _, _ = self.predictor.predict(points, point_labels)
+        mask = (mask[0, 0] > 0).detach().cpu().numpy()
+        return Image.alpha_composite(img, mask)
 
     async def get_images(self, *, timeout: Optional[float]=None, **kwargs) -> Tuple[List[NamedImage], ResponseMetadata]:
         raise NotImplementedError()

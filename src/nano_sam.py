@@ -5,7 +5,7 @@ import numpy as np
 
 from nanosam.utils.predictor import Predictor
 
-from PIL.Image import Image
+from PIL import Image
 from threading import Lock
 from typing import cast, ClassVar, List, Mapping, Optional, Sequence, Tuple, Union
 from typing_extensions import Self
@@ -53,7 +53,7 @@ class NanoSAM(Camera, Reconfigurable):
         cam_name = struct_to_dict(config.attributes).get("source")
         actual_cam = dependencies[Camera.get_resource_name(cam_name)]
         self.underlying = cast(Camera, actual_cam)
-        self.properties = self.underlying.properties()
+        self.properties = self.underlying.get_properties()
         #TODO: move image_encoder and mask_decoder to be args
         self.predictor = Predictor(
             "data/resnet18_image_encoder.engine",
@@ -61,8 +61,8 @@ class NanoSAM(Camera, Reconfigurable):
         )
         return
 
-    async def get_image(self, mime_type: str='', *, timeout: Optional[float]=None, **kwargs) -> Union[Image, RawImage]:
-        img = self.underlying.get_image()
+    async def get_image(self, mime_type: str='', *, timeout: Optional[float]=None, **kwargs) -> Union[Image.Image, RawImage]:
+        img = await self.underlying.get_image()
         self.predictor.set_image(img)
 
         # Segment using bounding box
@@ -74,7 +74,10 @@ class NanoSAM(Camera, Reconfigurable):
         point_labels = np.array([2, 3])
         mask, _, _ = self.predictor.predict(points, point_labels)
         mask = (mask[0, 0] > 0).detach().cpu().numpy()
-        return Image.alpha_composite(img, mask)
+        yellow_image = Image.new('RGBA', img.size, (255, 255, 0, 128))
+        img.paste(yellow_image, (0, 0), mask)
+
+        return img
 
     async def get_images(self, *, timeout: Optional[float]=None, **kwargs) -> Tuple[List[NamedImage], ResponseMetadata]:
         raise NotImplementedError()
